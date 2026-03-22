@@ -63,7 +63,6 @@ node --version
 npm --version
 ```
 
-> 📸 **SCREENSHOT**: Terminal showing `node --version` and `npm --version` output
 
 ### 2. Install MetaMask
 
@@ -74,7 +73,6 @@ Create or import a wallet, then add the **Sepolia testnet**:
 
 Get free Sepolia ETH from: [sepoliafaucet.com](https://sepoliafaucet.com)
 
-> 📸 **SCREENSHOT**: MetaMask showing Sepolia network selected with a small ETH balance
 
 ### 3. Get an Infura API Key
 
@@ -82,7 +80,6 @@ Get free Sepolia ETH from: [sepoliafaucet.com](https://sepoliafaucet.com)
 2. Create a new project → copy the **API Key**
 3. The RPC URL will be: `https://sepolia.infura.io/v3/<YOUR_KEY>`
 
-> 📸 **SCREENSHOT**: Infura dashboard showing project API key
 
 ### 4. Get an Etherscan API Key *(optional — only needed for contract verification)*
 
@@ -144,7 +141,6 @@ npm install
 npm run deploy
 ```
 
-> 📸 **SCREENSHOT**: Terminal output showing deployment — contract address printed at the end
 
 After deploy you will see output like:
 
@@ -166,7 +162,6 @@ cd blockchain && npm run smoke
 
 Expected output: `MATCH ✓` and `TAMPERED ✓`
 
-> 📸 **SCREENSHOT**: Smoke test terminal output showing MATCH and TAMPERED results
 
 ---
 
@@ -176,7 +171,6 @@ Expected output: `MATCH ✓` and `TAMPERED ✓`
 >
 > AWS Console → click the **CloudShell** icon in the top navigation bar
 
-> 📸 **SCREENSHOT**: AWS Console top bar with CloudShell icon highlighted
 
 Paste and run in CloudShell:
 
@@ -199,7 +193,6 @@ aws lambda publish-layer-version \
   --output text
 ```
 
-> 📸 **SCREENSHOT**: CloudShell output showing `✓ web3 installed`, `✓ web3-layer.zip created`, and the Layer ARN
 
 The last line printed is the Layer ARN — save it:
 
@@ -214,7 +207,6 @@ arn:aws:lambda:us-east-1:123456789012:layer:proj611-web3:1
 1. Go to **AWS Console → CloudFormation → Create stack → With new resources**
 2. Select **Upload a template file** → choose `infrastructure/cloudformation.yaml`
 
-> 📸 **SCREENSHOT**: CloudFormation "Create stack" page with template uploaded
 
 3. Fill in the parameters:
 
@@ -229,11 +221,9 @@ arn:aws:lambda:us-east-1:123456789012:layer:proj611-web3:1
 | `WalletPrivateKey` | Same as `WALLET_PRIVATE_KEY` in `.env` |
 | `LambdaLayerArn` | ARN from Step 4 |
 
-> 📸 **SCREENSHOT**: CloudFormation parameters page filled in (blur WalletPrivateKey)
 
 4. Click through to **Submit**. Stack creation takes ~3 minutes.
 
-> 📸 **SCREENSHOT**: CloudFormation stack showing `CREATE_COMPLETE`
 
 5. Open the **Outputs** tab and copy values to `.env`:
 
@@ -243,7 +233,6 @@ arn:aws:lambda:us-east-1:123456789012:layer:proj611-web3:1
 | `DynamoDBTableName` | `DYNAMODB_TABLE` |
 | `EC2PublicIP` | (for SSH if needed) |
 
-> 📸 **SCREENSHOT**: CloudFormation Outputs tab showing S3BucketName and DynamoDBTableName
 
 ---
 
@@ -255,13 +244,11 @@ Wait ~5 minutes for the first Lambda execution, then check:
 
 You should see batch entries with status `ON_CHAIN` and a real `tx_hash` starting with `0x`.
 
-> 📸 **SCREENSHOT**: DynamoDB table showing batch items with status ON_CHAIN and tx_hash values
 
 **CloudWatch Logs** — AWS Console → CloudWatch → Log groups → `/devops/app-logs`
 
 You should see log streams with audit events from EC2.
 
-> 📸 **SCREENSHOT**: CloudWatch log group showing log streams with events
 
 ---
 
@@ -281,7 +268,6 @@ Open `http://localhost:8080` in the browser.
 4. Use **getHash** with a batch ID from DynamoDB to fetch the on-chain record
 5. Use **verifyHash** to confirm the hash matches — result shows **MATCH** or **TAMPERED**
 
-> 📸 **SCREENSHOT**: Frontend showing connected wallet (Sepolia badge), contract info loaded, and a MATCH result from verifyHash
 
 ---
 
