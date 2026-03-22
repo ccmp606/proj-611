@@ -1,0 +1,745 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  PROJ-611: Deploys VPC, EC2 log generator, CloudWatch, S3 (WORM + KMS),
+  EventBridge, Lambda (SHA-256 hasher), and DynamoDB (batch metadata).
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Default: proj611-log
+    Description: Prefix for all resource names (lowercase, no spaces)
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues: [t2.micro, t2.small, t3.micro, t3.small]
+    Description: EC2 instance type
+
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+    Description: CloudWatch Log Group retention in days
+
+  SepoliaRpcUrl:
+    Type: String
+    Default: ''
+    Description: >
+      Sepolia RPC URL (e.g. https://sepolia.infura.io/v3/YOUR_KEY).
+      Leave empty to skip blockchain submission.
+
+  ContractAddress:
+    Type: String
+    Default: ''
+    Description: >
+      Smart contract address on Sepolia.
+      Leave empty to skip blockchain submission.
+
+  WalletPrivateKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: >
+      Lambda wallet private key for signing blockchain transactions.
+      Stored in SSM Parameter Store (not visible in console after deploy).
+
+  LambdaLayerArn:
+    Type: String
+    Default: ''
+    Description: >
+      ARN of the web3 Lambda Layer (e.g. arn:aws:lambda:us-east-1:123:layer:proj611-web3:1).
+      Build it with: infrastructure/lambda-layer/build.sh
+      Leave empty to skip blockchain submission (logs still hashed and stored in S3/DynamoDB).
+
+Conditions:
+  HasBlockchainConfig: !And
+    - !Not [!Equals [!Ref ContractAddress, '']]
+    - !Not [!Equals [!Ref WalletPrivateKey, '']]
+    - !Not [!Equals [!Ref SepoliaRpcUrl, '']]
+
+  StoreWalletKey: !Not [!Equals [!Ref WalletPrivateKey, '']]
+
+  HasWeb3Layer: !Not [!Equals [!Ref LambdaLayerArn, '']]
+
+Resources:
+
+  # Wallet private key in SSM — Lambda reads this at runtime
+  WalletKeyParam:
+    Type: AWS::SSM::Parameter
+    Condition: StoreWalletKey
+    Properties:
+      Name: !Sub '/${ProjectName}/wallet-private-key'
+      Type: String   # SecureString not supported in CFN; KMS encrypts S3 at rest separately
+      Value: !Ref WalletPrivateKey
+      Description: Lambda wallet private key for Ethereum Sepolia transactions
+
+  # KMS CMK for S3 log archive encryption
+  # Note: AllowRootAdmin enables IAM delegation, so role inline policies control actual access.
+  # Do NOT add specific role ARNs here — that creates a circular dependency with the IAM roles.
+  LogArchiveKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'CMK for ${ProjectName} S3 log archive'
+      EnableKeyRotation: true
+      MultiRegion: false
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Root account full access — this also enables IAM delegation for roles in this account
+          - Sid: AllowRootAdmin
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # S3 service needs this to perform SSE-KMS on its own
+          - Sid: AllowS3Service
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-s3-kms-key'
+        - Key: Project
+          Value: PROJ-611
+
+  LogArchiveKMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-s3-log-key'
+      TargetKeyId: !Ref LogArchiveKMSKey
+
+  # VPC + public subnet + internet gateway
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-igw'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-subnet'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security group: allow SSH (22) and HTTP health check (80)
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP (80) and SSH (22) inbound
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP health check
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-sg'
+
+  # S3 bucket — SSE-KMS + versioning
+  # NOTE: Before deleting the stack, manually empty this bucket first (S3 Console → Empty).
+  # Object Lock removed for test environment.
+  LogArchiveBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub
+          - '${ProjectName}-logs-${Suffix}'
+          - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref LogArchiveKMSKey
+            BucketKeyEnabled: true   # Reduces KMS API call cost
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveToIA
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+            NoncurrentVersionTransitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-log-archive'
+        - Key: Project
+          Value: PROJ-611
+
+  # DynamoDB — stores batch metadata (batch_id, hash, S3 keys, tx_hash)
+  BatchMetadataTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub '${ProjectName}-batch-metadata'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: batch_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: batch_id
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-batch-metadata'
+        - Key: Project
+          Value: PROJ-611
+
+  # CloudWatch Log Group — EC2 ships logs here via CloudWatch Agent
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /devops/app-logs
+      RetentionInDays: !Ref LogRetentionDays
+
+  # EC2 IAM role — needs CloudWatch Agent + S3 write + KMS encrypt
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: EC2S3LogWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['s3:PutObject']
+                Resource: !Sub 'arn:aws:s3:::${LogArchiveBucket}/*'
+              - Sid: EC2KMSEncrypt
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !GetAtt LogArchiveKMSKey.Arn
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # Lambda IAM role — needs CloudWatch read + S3 read/write + DynamoDB + SSM + KMS
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LogHasherPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:FilterLogEvents
+                  - logs:GetLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt AppLogGroup.Arn
+              - Sid: S3ReadWrite
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${LogArchiveBucket}/*'
+              - Sid: LambdaKMSEncryptDecrypt
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: !GetAtt LogArchiveKMSKey.Arn
+              - Sid: DynamoDBWrite
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: !GetAtt BatchMetadataTable.Arn
+              - Sid: SSMRead
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/*'
+
+  # Lambda — reads CloudWatch logs, computes SHA-256, stores to S3 + DynamoDB, submits to Sepolia
+  LogHashFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AppLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-log-hasher'
+      Description: Hashes CloudWatch log batches and stores them in S3, DynamoDB, and Ethereum Sepolia
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Layers: !If
+        - HasWeb3Layer
+        - - !Ref LambdaLayerArn
+        - !Ref 'AWS::NoValue'
+      Environment:
+        Variables:
+          LOG_GROUP_NAME: /devops/app-logs
+          S3_BUCKET_NAME: !Ref LogArchiveBucket
+          DYNAMODB_TABLE: !Sub '${ProjectName}-batch-metadata'
+          CONTRACT_ADDRESS: !Ref ContractAddress
+          RPC_URL: !Ref SepoliaRpcUrl
+          PRIVATE_KEY_PARAM: !Sub '/${ProjectName}/wallet-private-key'
+      Code:
+        ZipFile: |
+          import json, hashlib, boto3, os, time, urllib.request
+          from datetime import datetime, timezone, timedelta
+
+          LOG_GROUP  = os.environ['LOG_GROUP_NAME']
+          S3_BUCKET  = os.environ['S3_BUCKET_NAME']
+          DDB_TABLE  = os.environ['DYNAMODB_TABLE']
+          CONTRACT   = os.environ.get('CONTRACT_ADDRESS', '')
+          RPC_URL    = os.environ.get('RPC_URL', '')
+          PK_PARAM   = os.environ.get('PRIVATE_KEY_PARAM', '')
+
+          cw_logs = boto3.client('logs')
+          s3      = boto3.client('s3')
+          ddb     = boto3.client('dynamodb')
+          ssm     = boto3.client('ssm')
+
+          def get_private_key():
+              if not PK_PARAM:
+                  return None
+              try:
+                  return ssm.get_parameter(Name=PK_PARAM, WithDecryption=True)['Parameter']['Value']
+              except Exception as e:
+                  print(f'SSM fetch error: {e}')
+                  return None
+
+          def fetch_log_events(start_ms, end_ms):
+              events, kwargs = [], dict(
+                  logGroupName=LOG_GROUP,
+                  startTime=start_ms,
+                  endTime=end_ms,
+                  limit=10000
+              )
+              while True:
+                  resp = cw_logs.filter_log_events(**kwargs)
+                  events.extend(resp.get('events', []))
+                  token = resp.get('nextToken')
+                  if not token:
+                      break
+                  kwargs['nextToken'] = token
+              return events
+
+          def submit_to_blockchain(batch_id, sha256_hash, private_key):
+              # Requires web3 Lambda Layer (infrastructure/lambda-layer/build.sh).
+              if not (CONTRACT and RPC_URL and private_key):
+                  print('Blockchain config incomplete — skipping on-chain submission.')
+                  return None
+              try:
+                  from web3 import Web3
+                  w3 = Web3(Web3.HTTPProvider(RPC_URL))
+                  # ABI must match contract: storeHash(string _batchId, string _hash, uint256 _timestamp)
+                  ABI = [{"inputs":[{"name":"_batchId","type":"string"},{"name":"_hash","type":"string"},{"name":"_timestamp","type":"uint256"}],
+                          "name":"storeHash","outputs":[],"type":"function","stateMutability":"nonpayable"}]
+                  acct     = w3.eth.account.from_key(private_key)
+                  contract = w3.eth.contract(address=Web3.to_checksum_address(CONTRACT), abi=ABI)
+                  tx = contract.functions.storeHash(batch_id, sha256_hash, int(time.time())).build_transaction({
+                      'from':     acct.address,
+                      'nonce':    w3.eth.get_transaction_count(acct.address),
+                      'gas':      200000,
+                      'gasPrice': w3.eth.gas_price,
+                  })
+                  signed  = acct.sign_transaction(tx)
+                  tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+                  print(f'On-chain tx submitted: {tx_hash}')
+                  return tx_hash
+              except ImportError:
+                  print('web3 not found — attach the web3 Lambda Layer (infrastructure/lambda-layer/build.sh).')
+                  return 'WEB3_LAYER_REQUIRED'
+              except Exception as e:
+                  print(f'Blockchain error: {e}')
+                  return None
+
+          def lambda_handler(event, context):
+              end_dt   = datetime.now(timezone.utc)
+              start_dt = end_dt - timedelta(minutes=5)
+              batch_id = end_dt.strftime('%Y%m%dT%H%M%SZ')
+              print(f'[START] Batch {batch_id}')
+
+              # 1. Fetch log events from CloudWatch
+              events = fetch_log_events(
+                  int(start_dt.timestamp() * 1000),
+                  int(end_dt.timestamp() * 1000)
+              )
+              if not events:
+                  print('No log events in window.')
+                  return {'status': 'no_logs', 'batch_id': batch_id}
+              print(f'Fetched {len(events)} events.')
+
+              # 2. Compute SHA-256 hash
+              payload     = json.dumps(events, sort_keys=True, separators=(',', ':'))
+              sha256_hash = hashlib.sha256(payload.encode()).hexdigest()
+              print(f'SHA-256: {sha256_hash}')
+
+              # 3. Save log batch + hash file to S3
+              s3.put_object(Bucket=S3_BUCKET, Key=f'logs/{batch_id}/batch.json',
+                            Body=payload.encode(), ContentType='application/json')
+              s3.put_object(Bucket=S3_BUCKET, Key=f'hashes/{batch_id}/hash.json',
+                            Body=json.dumps({'batch_id': batch_id, 'hash': sha256_hash,
+                                             'event_count': len(events)}).encode(),
+                            ContentType='application/json')
+              print(f'Saved to S3: logs/{batch_id}/')
+
+              # 4. Submit hash to Ethereum Sepolia
+              tx_hash = submit_to_blockchain(batch_id, sha256_hash, get_private_key())
+
+              # 5. Write batch metadata to DynamoDB
+              on_chain = bool(tx_hash and tx_hash.startswith('0x'))
+              ddb.put_item(TableName=DDB_TABLE, Item={
+                  'batch_id':    {'S': batch_id},
+                  'sha256_hash': {'S': sha256_hash},
+                  's3_log_key':  {'S': f'logs/{batch_id}/batch.json'},
+                  's3_hash_key': {'S': f'hashes/{batch_id}/hash.json'},
+                  'event_count': {'N': str(len(events))},
+                  'timestamp':   {'S': end_dt.isoformat()},
+                  'tx_hash':     {'S': tx_hash or 'N/A'},
+                  'status':      {'S': 'ON_CHAIN' if on_chain else 'HASH_ONLY'},
+              })
+              print('Metadata written to DynamoDB.')
+
+              result = {'status': 'success', 'batch_id': batch_id,
+                        'sha256_hash': sha256_hash, 'event_count': len(events),
+                        'tx_hash': tx_hash or 'N/A'}
+              print(json.dumps(result))
+              return result
+
+      Tags:
+        - Key: Project
+          Value: PROJ-611
+
+  # EventBridge rule — triggers Lambda every 5 minutes
+  HashScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-hash-schedule'
+      Description: Trigger LogHashFunction every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: LogHashLambdaTarget
+          Arn: !GetAtt LogHashFunction.Arn
+
+  LambdaEventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LogHashFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HashScheduleRule.Arn
+
+  # EC2 — runs log generator + health check HTTP server on port 80
+  AppServer:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - AttachGateway
+      - AppLogGroup
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-app-server'
+        - Key: Project
+          Value: PROJ-611
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > /var/log/userdata.log 2>&1
+
+          echo "=== PROJ-611 Instance Bootstrap ==="
+          yum update -y
+
+          # Install CloudWatch Agent
+          yum install -y amazon-cloudwatch-agent python3
+
+          mkdir -p /var/log/app
+
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'
+          {
+            "agent": { "run_as_user": "root" },
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/app/app.log",
+                      "log_group_name": "/devops/app-logs",
+                      "log_stream_name": "{instance_id}",
+                      "timestamp_format": "%Y-%m-%dT%H:%M:%S",
+                      "timezone": "UTC",
+                      "multi_line_start_pattern": "{datetime_format}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          CWEOF
+
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+            -a fetch-config -m ec2 \
+            -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+          # Log generator — writes fake DevOps audit events to /var/log/app/app.log
+          cat > /opt/log_generator.py << 'PYEOF'
+          #!/usr/bin/env python3
+          import json, time, random, datetime, os, logging
+
+          os.makedirs('/var/log/app', exist_ok=True)
+          logging.basicConfig(
+              filename='/var/log/app/app.log',
+              format='%(asctime)s %(message)s',
+              datefmt='%Y-%m-%dT%H:%M:%S',
+              level=logging.INFO
+          )
+
+          SERVICES = ['api-gateway', 'auth-service', 'payment-service', 'inventory-service', 'notification-service']
+          ACTIONS  = ['user_login', 'data_read', 'data_write', 'config_change', 'deployment', 'health_check', 'token_refresh']
+          STATUSES = ['success', 'success', 'success', 'warning', 'error']
+          USERS    = ['admin', 'deploy-bot', 'ci-pipeline', 'monitoring-agent', 'audit-system']
+
+          def generate():
+              return {
+                  'timestamp':  datetime.datetime.utcnow().isoformat() + 'Z',
+                  'service':    random.choice(SERVICES),
+                  'action':     random.choice(ACTIONS),
+                  'status':     random.choice(STATUSES),
+                  'user':       random.choice(USERS),
+                  'source_ip':  f'10.0.{random.randint(0,2)}.{random.randint(1,254)}',
+                  'request_id': os.urandom(8).hex(),
+                  'latency_ms': random.randint(5, 800),
+              }
+
+          print('Log generator started.')
+          while True:
+              logging.info(json.dumps(generate()))
+              time.sleep(random.uniform(3, 10))
+          PYEOF
+
+          chmod +x /opt/log_generator.py
+
+          # Simple HTTP server on port 80 for health checks
+          cat > /opt/healthcheck.py << 'PYEOF2'
+          #!/usr/bin/env python3
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import json, datetime
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = json.dumps({
+                      'status': 'healthy',
+                      'service': 'proj611-log-generator',
+                      'timestamp': datetime.datetime.utcnow().isoformat() + 'Z'
+                  }).encode()
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/json')
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, *a): pass
+
+          HTTPServer(('0.0.0.0', 80), Handler).serve_forever()
+          PYEOF2
+
+          chmod +x /opt/healthcheck.py
+
+          # Register both scripts as systemd services
+          cat > /etc/systemd/system/log-generator.service << 'SVCEOF'
+          [Unit]
+          Description=PROJ-611 DevOps Log Generator
+          After=network.target amazon-cloudwatch-agent.service
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/python3 /opt/log_generator.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SVCEOF
+
+          cat > /etc/systemd/system/healthcheck.service << 'SVCEOF2'
+          [Unit]
+          Description=PROJ-611 Health Check HTTP Server (port 80)
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/python3 /opt/healthcheck.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SVCEOF2
+
+          systemctl daemon-reload
+          systemctl enable log-generator healthcheck
+          systemctl start  log-generator healthcheck
+
+          echo "=== Bootstrap complete ==="
+
+Outputs:
+
+  # Copy these values to .env after deploy
+
+  S3BucketName:
+    Description: "Copy to .env: S3_BUCKET_NAME"
+    Value: !Ref LogArchiveBucket
+    Export:
+      Name: !Sub '${ProjectName}-s3-bucket'
+
+  DynamoDBTableName:
+    Description: "Copy to .env: DYNAMODB_TABLE"
+    Value: !Ref BatchMetadataTable
+    Export:
+      Name: !Sub '${ProjectName}-dynamodb-table'
+
+  # EC2 access
+
+  EC2PublicIP:
+    Description: "EC2 public IP: use for SSH and health check"
+    Value: !GetAtt AppServer.PublicIp
+
+  EC2SSHCommand:
+    Description: SSH command to connect to EC2
+    Value: !Sub 'ssh -i ${KeyPairName}.pem ec2-user@${AppServer.PublicIp}'
+
+  HealthCheckURL:
+    Description: EC2 health check endpoint
+    Value: !Sub 'http://${AppServer.PublicIp}'
+
+  # Lambda
+
+  LambdaFunctionName:
+    Description: "Log hasher Lambda: test it manually from AWS Console"
+    Value: !Ref LogHashFunction
+
+  # Monitoring
+
+  CloudWatchLogGroup:
+    Description: CloudWatch Log Group receiving EC2 app logs
+    Value: !Ref AppLogGroup
+
+  # Next steps
+
+  NextSteps:
+    Description: Steps to activate blockchain integration after deploy
+    Value: !Sub |
+      1. Copy S3BucketName and DynamoDBTableName above to .env
+      2. Attach web3 Lambda Layer to ${ProjectName}-log-hasher
+      3. Test: AWS Console > Lambda > ${ProjectName}-log-hasher > Test

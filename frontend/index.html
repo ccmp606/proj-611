@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PROJ-611 — LogHashRegistry</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    header {
+      max-width: 800px;
+      margin: 0 auto 32px;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
+    header p  { font-size: 0.85rem; color: #64748b; margin-top: 4px; }
+
+    #connect-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    #btn-connect {
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 18px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #btn-connect:hover { background: #4f46e5; }
+
+    #wallet-info {
+      font-size: 0.8rem;
+      color: #94a3b8;
+      font-family: monospace;
+    }
+
+    #network-badge {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #1e293b;
+      color: #94a3b8;
+    }
+    #network-badge.sepolia { background: #1e3a5f; color: #60a5fa; }
+    #network-badge.wrong   { background: #3b1a1a; color: #f87171; }
+
+    main {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 20px 24px;
+    }
+
+    .card h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #a5b4fc;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .info-row {
+      display: flex;
+      gap: 8px;
+      font-size: 0.8rem;
+      flex-wrap: wrap;
+    }
+
+    .info-item {
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      padding: 6px 12px;
+      flex: 1;
+      min-width: 200px;
+    }
+    .info-item label { color: #64748b; display: block; margin-bottom: 2px; }
+    .info-item span  { color: #e2e8f0; font-family: monospace; word-break: break-all; }
+
+    .form-group { margin-bottom: 12px; }
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-bottom: 5px;
+    }
+
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      font-family: monospace;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: #6366f1; }
+
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    button.action {
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    button.action:hover    { background: #4f46e5; }
+    button.action:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+    button.action.secondary {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #94a3b8;
+    }
+    button.action.secondary:hover { background: #263548; }
+
+    .result {
+      margin-top: 12px;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.82rem;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      min-height: 40px;
+      color: #94a3b8;
+      display: none;
+    }
+    .result.show   { display: block; }
+    .result.ok     { border-color: #166534; color: #4ade80; }
+    .result.err    { border-color: #7f1d1d; color: #f87171; }
+    .result.warn   { border-color: #78350f; color: #fbbf24; }
+    .result.match  { border-color: #166534; color: #4ade80; }
+    .result.tamper { border-color: #7f1d1d; color: #f87171; }
+
+    .helper { font-size: 0.78rem; color: #475569; margin-top: 4px; }
+
+    #log {
+      background: #0a0d14;
+      border: 1px solid #1e2130;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.78rem;
+      font-family: monospace;
+      color: #475569;
+      max-height: 180px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>PROJ-611 — LogHashRegistry</h1>
+  <p>Sepolia testnet · <span id="contract-addr-short">0x106b...643</span></p>
+  <div id="connect-bar">
+    <button id="btn-connect">Connect MetaMask</button>
+    <span id="wallet-info">Not connected</span>
+    <span id="network-badge">—</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Contract Info -->
+  <div class="card">
+    <h2>📋 Contract Info</h2>
+    <div class="info-row">
+      <div class="info-item">
+        <label>Contract Address</label>
+        <span id="info-address">—</span>
+      </div>
+      <div class="info-item">
+        <label>Owner</label>
+        <span id="info-owner">—</span>
+      </div>
+      <div class="info-item">
+        <label>Total Batches On-Chain</label>
+        <span id="info-total">—</span>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="action secondary" onclick="loadInfo()">Refresh</button>
+    </div>
+  </div>
+
+  <!-- storeHash -->
+  <div class="card">
+    <h2>✍️ storeHash() <span style="font-size:0.75rem;color:#475569;font-weight:400">— write, requires owner wallet</span></h2>
+    <div class="form-group">
+      <label>Batch ID</label>
+      <input id="store-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
+      <p class="helper">Must be unique. Lambda uses timestamp format YYYYMMDDTHHmmssZ.</p>
+    </div>
+    <div class="form-group">
+      <label>SHA-256 Hash (64 hex chars)</label>
+      <input id="store-hash" type="text" placeholder="e.g. a3f2..." maxlength="64" />
+    </div>
+    <div class="btn-row">
+      <button class="action" onclick="doStoreHash()">Send Transaction</button>
+      <button class="action secondary" onclick="fillStoreDemo()">Fill Demo Values</button>
+    </div>
+    <div id="store-result" class="result"></div>
+  </div>
+
+  <!-- getHash -->
+  <div class="card">
+    <h2>🔍 getHash() <span style="font-size:0.75rem;color:#475569;font-weight:400">— read</span></h2>
+    <div class="form-group">
+      <label>Batch ID</label>
+      <input id="get-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
+    </div>
+    <button class="action" onclick="doGetHash()">Read</button>
+    <div id="get-result" class="result"></div>
+  </div>
+
+  <!-- verifyHash -->
+  <div class="card">
+    <h2>✅ verifyHash() <span style="font-size:0.75rem;color:#475569;font-weight:400">— read</span></h2>
+    <div class="form-group">
+      <label>Batch ID</label>
+      <input id="verify-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
+    </div>
+    <div class="form-group">
+      <label>SHA-256 Hash to verify</label>
+      <input id="verify-hash" type="text" placeholder="64 hex chars" maxlength="64" />
+    </div>
+    <button class="action" onclick="doVerifyHash()">Verify</button>
+    <div id="verify-result" class="result"></div>
+  </div>
+
+  <!-- batchExists + getBatchIdByIndex -->
+  <div class="card">
+    <h2>🗂️ Utilities</h2>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+
+      <div style="flex:1;min-width:220px">
+        <div class="form-group">
+          <label>batchExists() — Batch ID</label>
+          <input id="exists-batchid" type="text" placeholder="Batch ID" />
+        </div>
+        <button class="action secondary" onclick="doBatchExists()">Check</button>
+        <div id="exists-result" class="result"></div>
+      </div>
+
+      <div style="flex:1;min-width:220px">
+        <div class="form-group">
+          <label>getBatchIdByIndex() — Index</label>
+          <input id="index-val" type="number" placeholder="0" min="0" />
+        </div>
+        <button class="action secondary" onclick="doGetByIndex()">Get Batch ID</button>
+        <div id="index-result" class="result"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="card">
+    <h2>📝 Activity Log</h2>
+    <div id="log">Waiting for connection...</div>
+  </div>
+
+</main>
+
+<script>
+  const CONTRACT_ADDRESS = "0x106b74f8aaF6E548a8c733adEA2Cec02395B8643";
+  const SEPOLIA_CHAIN_ID = 11155111n;
+
+  const ABI = [
+    {"inputs":[],"stateMutability":"nonpayable","type":"constructor"},
+    {"inputs":[{"name":"_batchId","type":"string"},{"name":"_hash","type":"string"},{"name":"_timestamp","type":"uint256"}],"name":"storeHash","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"_batchId","type":"string"}],"name":"getHash","outputs":[{"name":"hashValue","type":"string"},{"name":"timestamp","type":"uint256"},{"name":"submitter","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"_batchId","type":"string"},{"name":"_hash","type":"string"}],"name":"verifyHash","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"_batchId","type":"string"}],"name":"batchExists","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"_index","type":"uint256"}],"name":"getBatchIdByIndex","outputs":[{"name":"","type":"string"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"owner","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"totalBatches","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"_newOwner","type":"address"}],"name":"transferOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"anonymous":false,"inputs":[{"indexed":true,"name":"batchId","type":"string"},{"name":"hashValue","type":"string"},{"name":"timestamp","type":"uint256"},{"indexed":true,"name":"submitter","type":"address"}],"name":"HashStored","type":"event"},
+    {"anonymous":false,"inputs":[{"indexed":true,"name":"previousOwner","type":"address"},{"indexed":true,"name":"newOwner","type":"address"}],"name":"OwnershipTransferred","type":"event"}
+  ];
+
+  let provider, signer, contract;
+
+  // ── Logging ──────────────────────────────────────────────────────────────
+  function log(msg, type = 'info') {
+    const el = document.getElementById('log');
+    const colors = { info: '#64748b', ok: '#4ade80', err: '#f87171', warn: '#fbbf24', tx: '#a5b4fc' };
+    const color = colors[type] || colors.info;
+    const time = new Date().toLocaleTimeString();
+    el.innerHTML += `<span style="color:${color}">[${time}] ${msg}</span>\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function showResult(id, text, type) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = `result show ${type}`;
+  }
+
+  // ── Connect MetaMask ──────────────────────────────────────────────────────
+  document.getElementById('btn-connect').onclick = async () => {
+    if (!window.ethereum) {
+      alert('MetaMask not found. Install it from metamask.io');
+      return;
+    }
+    try {
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer   = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+      const addr    = await signer.getAddress();
+      const network = await provider.getNetwork();
+      const chainId = network.chainId;
+
+      document.getElementById('wallet-info').textContent = addr.slice(0,6) + '...' + addr.slice(-4);
+      document.getElementById('info-address').textContent = CONTRACT_ADDRESS;
+
+      const badge = document.getElementById('network-badge');
+      if (chainId === SEPOLIA_CHAIN_ID) {
+        badge.textContent = 'Sepolia';
+        badge.className = 'network-badge sepolia';
+        log(`Connected: ${addr}`, 'ok');
+        log(`Network: Sepolia (${chainId})`, 'ok');
+        await loadInfo();
+      } else {
+        badge.textContent = `Wrong network (${chainId})`;
+        badge.className = 'network-badge wrong';
+        log(`Wrong network: ${chainId}. Prompting switch to Sepolia...`, 'err');
+        await switchToSepolia();
+      }
+
+      // Watch for account/network changes
+      window.ethereum.on('accountsChanged', () => location.reload());
+      window.ethereum.on('chainChanged',    () => location.reload());
+
+    } catch (e) {
+      log(`Connection failed: ${e.message}`, 'err');
+    }
+  };
+
+  // ── Switch network to Sepolia ─────────────────────────────────────────────
+  async function switchToSepolia() {
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0xaa36a7' }], // 11155111 in hex
+      });
+    } catch (e) {
+      // Error code 4902 = chain not added in MetaMask yet
+      if (e.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: '0xaa36a7',
+              chainName: 'Sepolia',
+              nativeCurrency: { name: 'SepoliaETH', symbol: 'ETH', decimals: 18 },
+              rpcUrls: ['https://rpc.sepolia.org'],
+              blockExplorerUrls: ['https://sepolia.etherscan.io'],
+            }],
+          });
+        } catch (addErr) {
+          log(`Could not add Sepolia: ${addErr.message}`, 'err');
+        }
+      } else {
+        log(`Switch rejected: ${e.message}`, 'err');
+      }
+    }
+  }
+
+  // ── Load contract info ────────────────────────────────────────────────────
+  async function loadInfo() {
+    if (!contract) return;
+    try {
+      const [owner, total] = await Promise.all([
+        contract.owner(),
+        contract.totalBatches(),
+      ]);
+      document.getElementById('info-owner').textContent = owner;
+      document.getElementById('info-total').textContent = total.toString();
+      log(`Info refreshed — owner: ${owner.slice(0,8)}... | totalBatches: ${total}`);
+    } catch (e) {
+      log(`loadInfo error: ${e.message}`, 'err');
+    }
+  }
+
+  // ── storeHash ─────────────────────────────────────────────────────────────
+  async function doStoreHash() {
+    if (!contract) return log('Connect wallet first.', 'warn');
+    const batchId = document.getElementById('store-batchid').value.trim();
+    const hash    = document.getElementById('store-hash').value.trim();
+    if (!batchId || hash.length !== 64) {
+      return showResult('store-result', 'Batch ID is required and hash must be 64 hex chars.', 'err');
+    }
+    try {
+      showResult('store-result', 'Sending transaction...', 'warn');
+      log(`storeHash("${batchId}", "${hash.slice(0,8)}...")`, 'tx');
+      const ts = Math.floor(Date.now() / 1000);
+      const tx = await contract.storeHash(batchId, hash, ts);
+      showResult('store-result', `TX submitted: ${tx.hash}\nWaiting for confirmation...`, 'warn');
+      log(`TX: ${tx.hash}`, 'tx');
+      const receipt = await tx.wait();
+      showResult('store-result',
+        `✓ Confirmed in block ${receipt.blockNumber}\nTX: ${tx.hash}`, 'ok');
+      log(`storeHash confirmed — block ${receipt.blockNumber}`, 'ok');
+      await loadInfo();
+    } catch (e) {
+      const msg = e.reason || e.message || String(e);
+      showResult('store-result', `Error: ${msg}`, 'err');
+      log(`storeHash error: ${msg}`, 'err');
+    }
+  }
+
+  function fillStoreDemo() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    const batchId = `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+    // Simple demo hash (not a real log hash)
+    const demoHash = Array.from({length:64}, () => '0123456789abcdef'[Math.floor(Math.random()*16)]).join('');
+    document.getElementById('store-batchid').value = batchId;
+    document.getElementById('store-hash').value    = demoHash;
+  }
+
+  // ── getHash ───────────────────────────────────────────────────────────────
+  async function doGetHash() {
+    if (!contract) return log('Connect wallet first.', 'warn');
+    const batchId = document.getElementById('get-batchid').value.trim();
+    if (!batchId) return showResult('get-result', 'Enter a Batch ID.', 'err');
+    try {
+      const [hashValue, timestamp, submitter] = await contract.getHash(batchId);
+      const date = new Date(Number(timestamp) * 1000).toISOString();
+      showResult('get-result',
+        `Hash      : ${hashValue}\nTimestamp : ${date}\nSubmitter : ${submitter}`, 'ok');
+      log(`getHash("${batchId}") → ${hashValue.slice(0,12)}...`, 'ok');
+
+      // Auto-fill verifyHash fields
+      document.getElementById('verify-batchid').value = batchId;
+      document.getElementById('verify-hash').value    = hashValue;
+    } catch (e) {
+      const msg = e.reason || e.message || String(e);
+      showResult('get-result', `Error: ${msg}`, 'err');
+      log(`getHash error: ${msg}`, 'err');
+    }
+  }
+
+  // ── verifyHash ────────────────────────────────────────────────────────────
+  async function doVerifyHash() {
+    if (!contract) return log('Connect wallet first.', 'warn');
+    const batchId = document.getElementById('verify-batchid').value.trim();
+    const hash    = document.getElementById('verify-hash').value.trim();
+    if (!batchId || !hash) return showResult('verify-result', 'Fill both fields.', 'err');
+    try {
+      const result = await contract.verifyHash(batchId, hash);
+      if (result) {
+        showResult('verify-result', '✓ MATCH — Hash matches on-chain record.', 'match');
+        log(`verifyHash("${batchId}") → MATCH`, 'ok');
+      } else {
+        showResult('verify-result', '✗ TAMPERED — Hash does NOT match on-chain record.', 'tamper');
+        log(`verifyHash("${batchId}") → TAMPERED`, 'err');
+      }
+    } catch (e) {
+      const msg = e.reason || e.message || String(e);
+      showResult('verify-result', `Error: ${msg}`, 'err');
+      log(`verifyHash error: ${msg}`, 'err');
+    }
+  }
+
+  // ── batchExists ───────────────────────────────────────────────────────────
+  async function doBatchExists() {
+    if (!contract) return log('Connect wallet first.', 'warn');
+    const batchId = document.getElementById('exists-batchid').value.trim();
+    if (!batchId) return showResult('exists-result', 'Enter a Batch ID.', 'err');
+    try {
+      const exists = await contract.batchExists(batchId);
+      showResult('exists-result', exists ? '✓ Exists' : '✗ Not found', exists ? 'ok' : 'err');
+      log(`batchExists("${batchId}") → ${exists}`, exists ? 'ok' : 'warn');
+    } catch (e) {
+      showResult('exists-result', `Error: ${e.message}`, 'err');
+    }
+  }
+
+  // ── getBatchIdByIndex ─────────────────────────────────────────────────────
+  async function doGetByIndex() {
+    if (!contract) return log('Connect wallet first.', 'warn');
+    const idx = document.getElementById('index-val').value;
+    if (idx === '') return showResult('index-result', 'Enter an index.', 'err');
+    try {
+      const batchId = await contract.getBatchIdByIndex(BigInt(idx));
+      showResult('index-result', batchId, 'ok');
+      log(`getBatchIdByIndex(${idx}) → ${batchId}`, 'ok');
+    } catch (e) {
+      const msg = e.reason || e.message || String(e);
+      showResult('index-result', `Error: ${msg}`, 'err');
+      log(`getBatchIdByIndex error: ${msg}`, 'err');
+    }
+  }
+</script>
+</body>
+</html>
