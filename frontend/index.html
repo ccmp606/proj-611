@@ -172,6 +172,28 @@
 
     .helper { font-size: 0.78rem; color: #475569; margin-top: 4px; }
 
+    .file-input {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .file-input::file-selector-button {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 4px;
+      color: #94a3b8;
+      padding: 4px 12px;
+      margin-right: 10px;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .file-input::file-selector-button:hover { background: #263548; }
+
     #log {
       background: #0a0d14;
       border: 1px solid #1e2130;
@@ -190,7 +212,7 @@
 
 <header>
   <h1>PROJ-611 — LogHashRegistry</h1>
-  <p>Sepolia testnet · <span id="contract-addr-short">0x106b...643</span></p>
+  <p>Sepolia testnet · <span id="contract-addr-short">0xd4AA...9b1</span></p>
   <div id="connect-bar">
     <button id="btn-connect">Connect MetaMask</button>
     <span id="wallet-info">Not connected</span>
@@ -267,6 +289,22 @@
     <div id="verify-result" class="result"></div>
   </div>
 
+  <!-- File Integrity Check -->
+  <div class="card">
+    <h2>📂 File Integrity Check <span style="font-size:0.75rem;color:#475569;font-weight:400">— upload file to verify against on-chain hash</span></h2>
+    <div class="form-group">
+      <label>Batch ID</label>
+      <input id="file-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
+    </div>
+    <div class="form-group">
+      <label>Upload Log File</label>
+      <input id="file-upload" type="file" class="file-input" />
+      <p class="helper">Browser computes SHA-256 locally — file is never sent to any server.</p>
+    </div>
+    <button class="action" onclick="doFileVerify()">Hash &amp; Verify</button>
+    <div id="file-result" class="result"></div>
+  </div>
+
   <!-- batchExists + getBatchIdByIndex -->
   <div class="card">
     <h2>🗂️ Utilities</h2>
@@ -302,7 +340,7 @@
 </main>
 
 <script>
-  const CONTRACT_ADDRESS = "0x106b74f8aaF6E548a8c733adEA2Cec02395B8643";
+  const CONTRACT_ADDRESS = "0xd4AA35966b0eE997CE9a489CAECE4BB452Feb9b1";
   const SEPOLIA_CHAIN_ID = 11155111n;
 
   const ABI = [
@@ -503,6 +541,55 @@
       const msg = e.reason || e.message || String(e);
       showResult('verify-result', `Error: ${msg}`, 'err');
       log(`verifyHash error: ${msg}`, 'err');
+    }
+  }
+
+  // ── File Integrity Check ─────────────────────────────────────────────────
+  async function computeFileHash(file) {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function doFileVerify() {
+    if (!contract) return log('Connect wallet first.', 'warn');
+    const batchId = document.getElementById('file-batchid').value.trim();
+    const fileInput = document.getElementById('file-upload');
+    if (!batchId) return showResult('file-result', 'Enter a Batch ID.', 'err');
+    if (!fileInput.files.length) return showResult('file-result', 'Select a file to verify.', 'err');
+
+    try {
+      showResult('file-result', 'Computing SHA-256 hash...', 'warn');
+      const fileHash = await computeFileHash(fileInput.files[0]);
+      log(`File SHA-256: ${fileHash.slice(0, 16)}...`, 'info');
+
+      showResult('file-result', `File hash: ${fileHash}\nFetching on-chain hash...`, 'warn');
+      const [onChainHash, timestamp, submitter] = await contract.getHash(batchId);
+
+      if (!onChainHash) {
+        showResult('file-result', `No on-chain record found for batch "${batchId}".`, 'err');
+        log(`File verify: batch "${batchId}" not found on-chain`, 'err');
+        return;
+      }
+
+      const match = fileHash === onChainHash;
+      const date = new Date(Number(timestamp) * 1000).toISOString();
+      const resultText =
+        `File hash    : ${fileHash}\n` +
+        `On-chain hash: ${onChainHash}\n` +
+        `Stored at    : ${date}\n` +
+        `Submitter    : ${submitter}\n\n` +
+        (match
+          ? '✓ MATCH — File is intact, not tampered.'
+          : '✗ TAMPERED — File hash does NOT match on-chain record!');
+
+      showResult('file-result', resultText, match ? 'match' : 'tamper');
+      log(`File verify("${batchId}") → ${match ? 'MATCH' : 'TAMPERED'}`, match ? 'ok' : 'err');
+    } catch (e) {
+      const msg = e.reason || e.message || String(e);
+      showResult('file-result', `Error: ${msg}`, 'err');
+      log(`File verify error: ${msg}`, 'err');
     }
   }
 
