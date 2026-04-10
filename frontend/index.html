@@ -173,6 +173,29 @@
       font-size: 0.85rem;
     }
 
+    /* ── Pagination ── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .pagination button {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      color: #475569;
+      padding: 5px 12px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .pagination button:hover { background: #e2e8f0; color: #1e293b; }
+    .pagination .page-info { font-size: 0.78rem; color: #64748b; }
+    .load-progress { font-size: 0.78rem; color: #4f46e5; text-align: center; margin-top: 4px; }
+
     /* ── Verify section ── */
     .form-group { margin-bottom: 12px; }
     .form-group label {
@@ -342,6 +365,8 @@
         </tbody>
       </table>
     </div>
+    <div id="batch-progress" class="load-progress"></div>
+    <div id="batch-pagination" class="pagination"></div>
   </div>
 
   <!-- Verify File Integrity -->
@@ -487,47 +512,96 @@
     }
   }
 
-  // ── Load All Batches into Table ─────────────────────────────────────────
+  // ── Batch loading config ────────────────────────────────────────────────
+  const BATCH_PAGE_SIZE = 10;
+  let batchTotal = 0;
+  let batchesLoaded = [];  // array of loaded batch data (newest first)
+
+  // ── Load latest batches from blockchain ────────────────────────────────
   async function loadBatches() {
     if (!contract) return log('Connect wallet first.', 'warn');
-    const tbody = document.getElementById('batch-table-body');
-    tbody.innerHTML = '<tr><td colspan="5" class="table-loading">Loading batches from blockchain...</td></tr>';
+    const tbody    = document.getElementById('batch-table-body');
+    const progress = document.getElementById('batch-progress');
+    const pagDiv   = document.getElementById('batch-pagination');
+
+    tbody.innerHTML = '<tr><td colspan="5" class="table-loading">Loading latest batches from blockchain...</td></tr>';
+    progress.textContent = '';
+    pagDiv.innerHTML = '';
+    batchesLoaded = [];
 
     try {
-      const total = Number(await contract.totalBatches());
-      if (total === 0) {
+      batchTotal = Number(await contract.totalBatches());
+      if (batchTotal === 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No batches found on-chain</td></tr>';
         log('No batches on-chain yet.');
         return;
       }
 
-      log(`Loading ${total} batches...`);
-      let rows = '';
-
-      for (let i = 0; i < total; i++) {
-        const batchId = await contract.getBatchIdByIndex(BigInt(i));
-        const [hashValue, timestamp] = await contract.getHash(batchId);
-        const date = new Date(Number(timestamp) * 1000);
-        const dateStr = date.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-
-        rows += `
-          <tr>
-            <td style="color:#94a3b8">${i + 1}</td>
-            <td>${batchId}</td>
-            <td style="font-size:0.78rem">${dateStr}</td>
-            <td class="hash-cell" title="${hashValue}">${hashValue}</td>
-            <td>
-              <button class="btn-copy" onclick="selectBatch('${batchId}', this)">Select</button>
-            </td>
-          </tr>`;
-      }
-
-      tbody.innerHTML = rows;
-      log(`Loaded ${total} batches`, 'ok');
+      await loadMoreBatches();
     } catch (e) {
       tbody.innerHTML = `<tr><td colspan="5" class="table-empty" style="color:#f87171">Error: ${e.message}</td></tr>`;
+      progress.textContent = '';
       log(`loadBatches error: ${e.message}`, 'err');
     }
+  }
+
+  // ── Load next page of batches (newest first, parallel) ─────────────────
+  async function loadMoreBatches() {
+    const tbody    = document.getElementById('batch-table-body');
+    const progress = document.getElementById('batch-progress');
+
+    // Calculate which indices to load next (newest first)
+    const highestUnloaded = batchTotal - 1 - batchesLoaded.length;
+    if (highestUnloaded < 0) return;
+
+    const startIdx = highestUnloaded;
+    const endIdx   = Math.max(startIdx - BATCH_PAGE_SIZE + 1, 0);
+
+    progress.textContent = `Loading batches...`;
+
+    // Build indices for this chunk (newest first)
+    const indices = [];
+    for (let i = startIdx; i >= endIdx; i--) indices.push(i);
+
+    // Load all in parallel (only 10 calls, safe to do at once)
+    const results = await Promise.all(indices.map(async (idx) => {
+      const batchId = await contract.getBatchIdByIndex(BigInt(idx));
+      const [hashValue, timestamp] = await contract.getHash(batchId);
+      const date = new Date(Number(timestamp) * 1000);
+      const dateStr = date.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+      return { idx, batchId, hashValue, dateStr };
+    }));
+
+    batchesLoaded.push(...results);
+    progress.textContent = '';
+
+    // Render all loaded rows
+    let rows = '';
+    batchesLoaded.forEach((b) => {
+      rows += `
+        <tr>
+          <td style="color:#94a3b8">${b.idx + 1}</td>
+          <td>${b.batchId}</td>
+          <td style="font-size:0.78rem">${b.dateStr}</td>
+          <td class="hash-cell" title="${b.hashValue}">${b.hashValue}</td>
+          <td>
+            <button class="btn-copy" onclick="selectBatch('${b.batchId}', this)">Select</button>
+          </td>
+        </tr>`;
+    });
+    tbody.innerHTML = rows;
+
+    // Show "Load More" button if there are more batches
+    const pagDiv = document.getElementById('batch-pagination');
+    const remaining = batchTotal - batchesLoaded.length;
+    if (remaining > 0) {
+      pagDiv.innerHTML = `<button onclick="loadMoreBatches()">Load ${Math.min(BATCH_PAGE_SIZE, remaining)} more</button>` +
+        `<span class="page-info">Showing ${batchesLoaded.length} of ${batchTotal} batches (newest first)</span>`;
+    } else {
+      pagDiv.innerHTML = `<span class="page-info">All ${batchTotal} batches loaded</span>`;
+    }
+
+    log(`Loaded ${batchesLoaded.length}/${batchTotal} batches (newest first)`, 'ok');
   }
 
   // ── Select Batch from table ──────────────────────────────────────────────
