@@ -3,25 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PROJ-611 — LogHashRegistry</title>
+  <title>PROJ-611 — Log Integrity Dashboard</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      background: #f1f5f9;
+      color: #1e293b;
       min-height: 100vh;
       padding: 24px 16px;
     }
 
     header {
-      max-width: 800px;
+      max-width: 960px;
       margin: 0 auto 32px;
     }
 
-    header h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
+    header h1 { font-size: 1.5rem; font-weight: 600; color: #0f172a; }
     header p  { font-size: 0.85rem; color: #64748b; margin-top: 4px; }
 
     #connect-bar {
@@ -33,7 +33,7 @@
     }
 
     #btn-connect {
-      background: #6366f1;
+      background: #4f46e5;
       color: #fff;
       border: none;
       border-radius: 8px;
@@ -43,11 +43,11 @@
       cursor: pointer;
       transition: background 0.15s;
     }
-    #btn-connect:hover { background: #4f46e5; }
+    #btn-connect:hover { background: #4338ca; }
 
     #wallet-info {
       font-size: 0.8rem;
-      color: #94a3b8;
+      color: #475569;
       font-family: monospace;
     }
 
@@ -55,14 +55,14 @@
       font-size: 0.75rem;
       padding: 3px 10px;
       border-radius: 999px;
-      background: #1e293b;
-      color: #94a3b8;
+      background: #e2e8f0;
+      color: #64748b;
     }
-    #network-badge.sepolia { background: #1e3a5f; color: #60a5fa; }
-    #network-badge.wrong   { background: #3b1a1a; color: #f87171; }
+    #network-badge.sepolia { background: #dbeafe; color: #1d4ed8; }
+    #network-badge.wrong   { background: #fee2e2; color: #dc2626; }
 
     main {
-      max-width: 800px;
+      max-width: 960px;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
@@ -70,66 +70,135 @@
     }
 
     .card {
-      background: #1e2130;
-      border: 1px solid #2d3148;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
       border-radius: 12px;
       padding: 20px 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
 
     .card h2 {
-      font-size: 0.95rem;
+      font-size: 1rem;
       font-weight: 600;
-      color: #a5b4fc;
+      color: #4338ca;
       margin-bottom: 14px;
       display: flex;
       align-items: center;
       gap: 8px;
     }
 
-    .info-row {
+    /* ── Stats row ── */
+    .stats-row {
       display: flex;
-      gap: 8px;
-      font-size: 0.8rem;
+      gap: 12px;
       flex-wrap: wrap;
     }
-
-    .info-item {
-      background: #0f1117;
-      border: 1px solid #2d3148;
-      border-radius: 6px;
-      padding: 6px 12px;
+    .stat-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px 16px;
       flex: 1;
-      min-width: 200px;
+      min-width: 160px;
+      text-align: center;
     }
-    .info-item label { color: #64748b; display: block; margin-bottom: 2px; }
-    .info-item span  { color: #e2e8f0; font-family: monospace; word-break: break-all; }
+    .stat-box .label { font-size: 0.75rem; color: #64748b; margin-bottom: 4px; }
+    .stat-box .value { font-size: 1.1rem; color: #0f172a; font-weight: 600; font-family: monospace; }
 
+    /* ── Log Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      background: #f8fafc;
+      color: #64748b;
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 2px solid #e2e8f0;
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #334155;
+      font-family: monospace;
+      font-size: 0.8rem;
+    }
+
+    tr:hover td { background: #f8fafc; }
+
+    .hash-cell {
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .btn-copy {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      color: #475569;
+      padding: 3px 10px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-copy:hover { background: #e2e8f0; color: #1e293b; }
+    .btn-copy.copied { background: #dcfce7; border-color: #16a34a; color: #16a34a; }
+
+    .table-empty {
+      text-align: center;
+      padding: 32px;
+      color: #94a3b8;
+      font-size: 0.85rem;
+    }
+
+    .table-loading {
+      text-align: center;
+      padding: 24px;
+      color: #4f46e5;
+      font-size: 0.85rem;
+    }
+
+    /* ── Verify section ── */
     .form-group { margin-bottom: 12px; }
     .form-group label {
       display: block;
       font-size: 0.8rem;
-      color: #94a3b8;
+      color: #475569;
       margin-bottom: 5px;
+      font-weight: 500;
     }
 
-    input[type="text"], input[type="number"] {
+    input[type="text"] {
       width: 100%;
-      background: #0f1117;
-      border: 1px solid #2d3148;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
       border-radius: 6px;
       padding: 8px 12px;
-      color: #e2e8f0;
+      color: #1e293b;
       font-size: 0.85rem;
       font-family: monospace;
       outline: none;
       transition: border-color 0.15s;
     }
-    input:focus { border-color: #6366f1; }
-
-    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
 
     button.action {
-      background: #6366f1;
+      background: #4f46e5;
       color: #fff;
       border: none;
       border-radius: 6px;
@@ -138,71 +207,81 @@
       font-weight: 500;
       cursor: pointer;
       transition: background 0.15s;
-      white-space: nowrap;
     }
-    button.action:hover    { background: #4f46e5; }
-    button.action:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+    button.action:hover    { background: #4338ca; }
+    button.action:disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; }
     button.action.secondary {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #94a3b8;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      color: #475569;
     }
-    button.action.secondary:hover { background: #263548; }
+    button.action.secondary:hover { background: #e2e8f0; }
 
     .result {
-      margin-top: 12px;
-      background: #0f1117;
-      border: 1px solid #2d3148;
-      border-radius: 6px;
-      padding: 10px 14px;
-      font-size: 0.82rem;
+      margin-top: 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px 18px;
+      font-size: 0.85rem;
       font-family: monospace;
       white-space: pre-wrap;
       word-break: break-all;
       min-height: 40px;
-      color: #94a3b8;
+      color: #475569;
       display: none;
     }
     .result.show   { display: block; }
-    .result.ok     { border-color: #166534; color: #4ade80; }
-    .result.err    { border-color: #7f1d1d; color: #f87171; }
-    .result.warn   { border-color: #78350f; color: #fbbf24; }
-    .result.match  { border-color: #166534; color: #4ade80; }
-    .result.tamper { border-color: #7f1d1d; color: #f87171; }
+    .result.ok     { border-color: #16a34a; color: #15803d; background: #f0fdf4; }
+    .result.err    { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+    .result.warn   { border-color: #d97706; color: #b45309; background: #fffbeb; }
 
-    .helper { font-size: 0.78rem; color: #475569; margin-top: 4px; }
+    .result.match {
+      border-color: #16a34a;
+      background: #f0fdf4;
+    }
+    .result.match .result-status { color: #15803d; font-size: 1.1rem; font-weight: 600; }
+    .result.match .result-detail { color: #166534; margin-top: 8px; font-size: 0.82rem; }
+
+    .result.tamper {
+      border-color: #dc2626;
+      background: #fef2f2;
+    }
+    .result.tamper .result-status { color: #dc2626; font-size: 1.1rem; font-weight: 600; }
+    .result.tamper .result-detail { color: #7f1d1d; margin-top: 8px; font-size: 0.82rem; }
 
     .file-input {
       width: 100%;
-      background: #0f1117;
-      border: 1px solid #2d3148;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
       border-radius: 6px;
       padding: 8px 12px;
-      color: #e2e8f0;
+      color: #1e293b;
       font-size: 0.85rem;
       cursor: pointer;
     }
     .file-input::file-selector-button {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: #e2e8f0;
+      border: 1px solid #cbd5e1;
       border-radius: 4px;
-      color: #94a3b8;
+      color: #475569;
       padding: 4px 12px;
       margin-right: 10px;
       cursor: pointer;
       font-size: 0.8rem;
     }
-    .file-input::file-selector-button:hover { background: #263548; }
+    .file-input::file-selector-button:hover { background: #cbd5e1; }
 
+    /* ── Activity Log ── */
     #log {
-      background: #0a0d14;
-      border: 1px solid #1e2130;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
       border-radius: 8px;
       padding: 12px 16px;
       font-size: 0.78rem;
       font-family: monospace;
-      color: #475569;
-      max-height: 180px;
+      color: #64748b;
+      max-height: 160px;
       overflow-y: auto;
       white-space: pre-wrap;
     }
@@ -211,8 +290,8 @@
 <body>
 
 <header>
-  <h1>PROJ-611 — LogHashRegistry</h1>
-  <p>Sepolia testnet · <span id="contract-addr-short">0xd4AA...9b1</span></p>
+  <h1>PROJ-611 — Log Integrity Dashboard</h1>
+  <p>Blockchain-verified audit trail · Sepolia testnet · <span id="contract-addr-short">0xd4AA...9b1</span></p>
   <div id="connect-bar">
     <button id="btn-connect">Connect MetaMask</button>
     <span id="wallet-info">Not connected</span>
@@ -222,113 +301,66 @@
 
 <main>
 
-  <!-- Contract Info -->
+  <!-- Stats Overview -->
   <div class="card">
-    <h2>📋 Contract Info</h2>
-    <div class="info-row">
-      <div class="info-item">
-        <label>Contract Address</label>
-        <span id="info-address">—</span>
+    <h2>📊 Overview</h2>
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="label">Total Batches On-Chain</div>
+        <div class="value" id="stat-total">—</div>
       </div>
-      <div class="info-item">
-        <label>Owner</label>
-        <span id="info-owner">—</span>
+      <div class="stat-box">
+        <div class="label">Contract</div>
+        <div class="value" id="stat-contract" style="font-size:0.75rem">—</div>
       </div>
-      <div class="info-item">
-        <label>Total Batches On-Chain</label>
-        <span id="info-total">—</span>
+      <div class="stat-box">
+        <div class="label">Owner</div>
+        <div class="value" id="stat-owner" style="font-size:0.75rem">—</div>
       </div>
     </div>
-    <div style="margin-top:12px">
-      <button class="action secondary" onclick="loadInfo()">Refresh</button>
+  </div>
+
+  <!-- Log Explorer -->
+  <div class="card">
+    <h2>
+      📋 Available Log Batches
+      <button class="action secondary" onclick="loadBatches()" style="margin-left:auto;font-size:0.75rem;padding:4px 12px">Refresh</button>
+    </h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px">#</th>
+            <th>Batch ID</th>
+            <th>Timestamp</th>
+            <th>SHA-256 Hash</th>
+            <th style="width:60px"></th>
+          </tr>
+        </thead>
+        <tbody id="batch-table-body">
+          <tr><td colspan="5" class="table-empty">Connect wallet to load batches</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
-  <!-- storeHash -->
+  <!-- Verify File Integrity -->
   <div class="card">
-    <h2>✍️ storeHash() <span style="font-size:0.75rem;color:#475569;font-weight:400">— write, requires owner wallet</span></h2>
+    <h2>🔍 Verify File Integrity</h2>
+    <p style="font-size:0.82rem;color:#64748b;margin-bottom:14px">
+      Select a log batch and upload the file to check if it has been modified.
+    </p>
     <div class="form-group">
       <label>Batch ID</label>
-      <input id="store-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
-      <p class="helper">Must be unique. Lambda uses timestamp format YYYYMMDDTHHmmssZ.</p>
-    </div>
-    <div class="form-group">
-      <label>SHA-256 Hash (64 hex chars)</label>
-      <input id="store-hash" type="text" placeholder="e.g. a3f2..." maxlength="64" />
-    </div>
-    <div class="btn-row">
-      <button class="action" onclick="doStoreHash()">Send Transaction</button>
-      <button class="action secondary" onclick="fillStoreDemo()">Fill Demo Values</button>
-    </div>
-    <div id="store-result" class="result"></div>
-  </div>
-
-  <!-- getHash -->
-  <div class="card">
-    <h2>🔍 getHash() <span style="font-size:0.75rem;color:#475569;font-weight:400">— read</span></h2>
-    <div class="form-group">
-      <label>Batch ID</label>
-      <input id="get-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
-    </div>
-    <button class="action" onclick="doGetHash()">Read</button>
-    <div id="get-result" class="result"></div>
-  </div>
-
-  <!-- verifyHash -->
-  <div class="card">
-    <h2>✅ verifyHash() <span style="font-size:0.75rem;color:#475569;font-weight:400">— read</span></h2>
-    <div class="form-group">
-      <label>Batch ID</label>
-      <input id="verify-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
-    </div>
-    <div class="form-group">
-      <label>SHA-256 Hash to verify</label>
-      <input id="verify-hash" type="text" placeholder="64 hex chars" maxlength="64" />
-    </div>
-    <button class="action" onclick="doVerifyHash()">Verify</button>
-    <div id="verify-result" class="result"></div>
-  </div>
-
-  <!-- File Integrity Check -->
-  <div class="card">
-    <h2>📂 File Integrity Check <span style="font-size:0.75rem;color:#475569;font-weight:400">— upload file to verify against on-chain hash</span></h2>
-    <div class="form-group">
-      <label>Batch ID</label>
-      <input id="file-batchid" type="text" placeholder="e.g. 20260322T150000Z" />
+      <input id="verify-batchid" type="text" placeholder="Click 'Select' from the table above, or enter manually" />
     </div>
     <div class="form-group">
       <label>Upload Log File</label>
-      <input id="file-upload" type="file" class="file-input" />
-      <p class="helper">Browser computes SHA-256 locally — file is never sent to any server.</p>
+      <input id="verify-file" type="file" class="file-input" />
+      <p style="font-size:0.75rem;color:#94a3b8;margin-top:4px">The file is hashed locally in your browser — never uploaded to any server.</p>
     </div>
-    <button class="action" onclick="doFileVerify()">Hash &amp; Verify</button>
-    <div id="file-result" class="result"></div>
-  </div>
-
-  <!-- batchExists + getBatchIdByIndex -->
-  <div class="card">
-    <h2>🗂️ Utilities</h2>
-    <div style="display:flex;gap:16px;flex-wrap:wrap">
-
-      <div style="flex:1;min-width:220px">
-        <div class="form-group">
-          <label>batchExists() — Batch ID</label>
-          <input id="exists-batchid" type="text" placeholder="Batch ID" />
-        </div>
-        <button class="action secondary" onclick="doBatchExists()">Check</button>
-        <div id="exists-result" class="result"></div>
-      </div>
-
-      <div style="flex:1;min-width:220px">
-        <div class="form-group">
-          <label>getBatchIdByIndex() — Index</label>
-          <input id="index-val" type="number" placeholder="0" min="0" />
-        </div>
-        <button class="action secondary" onclick="doGetByIndex()">Get Batch ID</button>
-        <div id="index-result" class="result"></div>
-      </div>
-
-    </div>
+    <button class="action" onclick="doVerifyFile()">Check File Integrity</button>
+    <div id="verify-result" class="result"></div>
   </div>
 
   <!-- Activity Log -->
@@ -362,17 +394,11 @@
   // ── Logging ──────────────────────────────────────────────────────────────
   function log(msg, type = 'info') {
     const el = document.getElementById('log');
-    const colors = { info: '#64748b', ok: '#4ade80', err: '#f87171', warn: '#fbbf24', tx: '#a5b4fc' };
+    const colors = { info: '#64748b', ok: '#16a34a', err: '#dc2626', warn: '#d97706', tx: '#4f46e5' };
     const color = colors[type] || colors.info;
     const time = new Date().toLocaleTimeString();
     el.innerHTML += `<span style="color:${color}">[${time}] ${msg}</span>\n`;
     el.scrollTop = el.scrollHeight;
-  }
-
-  function showResult(id, text, type) {
-    const el = document.getElementById(id);
-    el.textContent = text;
-    el.className = `result show ${type}`;
   }
 
   // ── Connect MetaMask ──────────────────────────────────────────────────────
@@ -392,7 +418,6 @@
       const chainId = network.chainId;
 
       document.getElementById('wallet-info').textContent = addr.slice(0,6) + '...' + addr.slice(-4);
-      document.getElementById('info-address').textContent = CONTRACT_ADDRESS;
 
       const badge = document.getElementById('network-badge');
       if (chainId === SEPOLIA_CHAIN_ID) {
@@ -400,15 +425,15 @@
         badge.className = 'network-badge sepolia';
         log(`Connected: ${addr}`, 'ok');
         log(`Network: Sepolia (${chainId})`, 'ok');
-        await loadInfo();
+        await loadOverview();
+        await loadBatches();
       } else {
         badge.textContent = `Wrong network (${chainId})`;
         badge.className = 'network-badge wrong';
-        log(`Wrong network: ${chainId}. Prompting switch to Sepolia...`, 'err');
+        log(`Wrong network: ${chainId}. Switching to Sepolia...`, 'err');
         await switchToSepolia();
       }
 
-      // Watch for account/network changes
       window.ethereum.on('accountsChanged', () => location.reload());
       window.ethereum.on('chainChanged',    () => location.reload());
 
@@ -417,15 +442,13 @@
     }
   };
 
-  // ── Switch network to Sepolia ─────────────────────────────────────────────
   async function switchToSepolia() {
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: '0xaa36a7' }], // 11155111 in hex
+        params: [{ chainId: '0xaa36a7' }],
       });
     } catch (e) {
-      // Error code 4902 = chain not added in MetaMask yet
       if (e.code === 4902) {
         try {
           await window.ethereum.request({
@@ -447,104 +470,85 @@
     }
   }
 
-  // ── Load contract info ────────────────────────────────────────────────────
-  async function loadInfo() {
+  // ── Load Overview Stats ─────────────────────────────────────────────────
+  async function loadOverview() {
     if (!contract) return;
     try {
       const [owner, total] = await Promise.all([
         contract.owner(),
         contract.totalBatches(),
       ]);
-      document.getElementById('info-owner').textContent = owner;
-      document.getElementById('info-total').textContent = total.toString();
-      log(`Info refreshed — owner: ${owner.slice(0,8)}... | totalBatches: ${total}`);
+      document.getElementById('stat-total').textContent = total.toString();
+      document.getElementById('stat-contract').textContent = CONTRACT_ADDRESS.slice(0,6) + '...' + CONTRACT_ADDRESS.slice(-4);
+      document.getElementById('stat-owner').textContent = owner.slice(0,6) + '...' + owner.slice(-4);
+      log(`Overview loaded — ${total} batches on-chain`);
     } catch (e) {
-      log(`loadInfo error: ${e.message}`, 'err');
+      log(`loadOverview error: ${e.message}`, 'err');
     }
   }
 
-  // ── storeHash ─────────────────────────────────────────────────────────────
-  async function doStoreHash() {
+  // ── Load All Batches into Table ─────────────────────────────────────────
+  async function loadBatches() {
     if (!contract) return log('Connect wallet first.', 'warn');
-    const batchId = document.getElementById('store-batchid').value.trim();
-    const hash    = document.getElementById('store-hash').value.trim();
-    if (!batchId || hash.length !== 64) {
-      return showResult('store-result', 'Batch ID is required and hash must be 64 hex chars.', 'err');
-    }
+    const tbody = document.getElementById('batch-table-body');
+    tbody.innerHTML = '<tr><td colspan="5" class="table-loading">Loading batches from blockchain...</td></tr>';
+
     try {
-      showResult('store-result', 'Sending transaction...', 'warn');
-      log(`storeHash("${batchId}", "${hash.slice(0,8)}...")`, 'tx');
-      const ts = Math.floor(Date.now() / 1000);
-      const tx = await contract.storeHash(batchId, hash, ts);
-      showResult('store-result', `TX submitted: ${tx.hash}\nWaiting for confirmation...`, 'warn');
-      log(`TX: ${tx.hash}`, 'tx');
-      const receipt = await tx.wait();
-      showResult('store-result',
-        `✓ Confirmed in block ${receipt.blockNumber}\nTX: ${tx.hash}`, 'ok');
-      log(`storeHash confirmed — block ${receipt.blockNumber}`, 'ok');
-      await loadInfo();
-    } catch (e) {
-      const msg = e.reason || e.message || String(e);
-      showResult('store-result', `Error: ${msg}`, 'err');
-      log(`storeHash error: ${msg}`, 'err');
-    }
-  }
-
-  function fillStoreDemo() {
-    const now = new Date();
-    const pad = n => String(n).padStart(2,'0');
-    const batchId = `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
-    // Simple demo hash (not a real log hash)
-    const demoHash = Array.from({length:64}, () => '0123456789abcdef'[Math.floor(Math.random()*16)]).join('');
-    document.getElementById('store-batchid').value = batchId;
-    document.getElementById('store-hash').value    = demoHash;
-  }
-
-  // ── getHash ───────────────────────────────────────────────────────────────
-  async function doGetHash() {
-    if (!contract) return log('Connect wallet first.', 'warn');
-    const batchId = document.getElementById('get-batchid').value.trim();
-    if (!batchId) return showResult('get-result', 'Enter a Batch ID.', 'err');
-    try {
-      const [hashValue, timestamp, submitter] = await contract.getHash(batchId);
-      const date = new Date(Number(timestamp) * 1000).toISOString();
-      showResult('get-result',
-        `Hash      : ${hashValue}\nTimestamp : ${date}\nSubmitter : ${submitter}`, 'ok');
-      log(`getHash("${batchId}") → ${hashValue.slice(0,12)}...`, 'ok');
-
-      // Auto-fill verifyHash fields
-      document.getElementById('verify-batchid').value = batchId;
-      document.getElementById('verify-hash').value    = hashValue;
-    } catch (e) {
-      const msg = e.reason || e.message || String(e);
-      showResult('get-result', `Error: ${msg}`, 'err');
-      log(`getHash error: ${msg}`, 'err');
-    }
-  }
-
-  // ── verifyHash ────────────────────────────────────────────────────────────
-  async function doVerifyHash() {
-    if (!contract) return log('Connect wallet first.', 'warn');
-    const batchId = document.getElementById('verify-batchid').value.trim();
-    const hash    = document.getElementById('verify-hash').value.trim();
-    if (!batchId || !hash) return showResult('verify-result', 'Fill both fields.', 'err');
-    try {
-      const result = await contract.verifyHash(batchId, hash);
-      if (result) {
-        showResult('verify-result', '✓ MATCH — Hash matches on-chain record.', 'match');
-        log(`verifyHash("${batchId}") → MATCH`, 'ok');
-      } else {
-        showResult('verify-result', '✗ TAMPERED — Hash does NOT match on-chain record.', 'tamper');
-        log(`verifyHash("${batchId}") → TAMPERED`, 'err');
+      const total = Number(await contract.totalBatches());
+      if (total === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No batches found on-chain</td></tr>';
+        log('No batches on-chain yet.');
+        return;
       }
+
+      log(`Loading ${total} batches...`);
+      let rows = '';
+
+      for (let i = 0; i < total; i++) {
+        const batchId = await contract.getBatchIdByIndex(BigInt(i));
+        const [hashValue, timestamp] = await contract.getHash(batchId);
+        const date = new Date(Number(timestamp) * 1000);
+        const dateStr = date.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+
+        rows += `
+          <tr>
+            <td style="color:#94a3b8">${i + 1}</td>
+            <td>${batchId}</td>
+            <td style="font-size:0.78rem">${dateStr}</td>
+            <td class="hash-cell" title="${hashValue}">${hashValue}</td>
+            <td>
+              <button class="btn-copy" onclick="selectBatch('${batchId}', this)">Select</button>
+            </td>
+          </tr>`;
+      }
+
+      tbody.innerHTML = rows;
+      log(`Loaded ${total} batches`, 'ok');
     } catch (e) {
-      const msg = e.reason || e.message || String(e);
-      showResult('verify-result', `Error: ${msg}`, 'err');
-      log(`verifyHash error: ${msg}`, 'err');
+      tbody.innerHTML = `<tr><td colspan="5" class="table-empty" style="color:#f87171">Error: ${e.message}</td></tr>`;
+      log(`loadBatches error: ${e.message}`, 'err');
     }
   }
 
-  // ── File Integrity Check ─────────────────────────────────────────────────
+  // ── Select Batch from table ──────────────────────────────────────────────
+  function selectBatch(batchId, btn) {
+    document.getElementById('verify-batchid').value = batchId;
+
+    // Visual feedback
+    document.querySelectorAll('.btn-copy').forEach(b => {
+      b.textContent = 'Select';
+      b.classList.remove('copied');
+    });
+    btn.textContent = '✓ Selected';
+    btn.classList.add('copied');
+
+    log(`Selected batch "${batchId}"`, 'info');
+
+    // Scroll to verify section
+    document.getElementById('verify-batchid').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // ── Compute SHA-256 of file ────────────────────────────────────────────
   async function computeFileHash(file) {
     const buffer = await file.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
@@ -552,74 +556,83 @@
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
-  async function doFileVerify() {
+  // ── Verify File Integrity ──────────────────────────────────────────────
+  async function doVerifyFile() {
     if (!contract) return log('Connect wallet first.', 'warn');
-    const batchId = document.getElementById('file-batchid').value.trim();
-    const fileInput = document.getElementById('file-upload');
-    if (!batchId) return showResult('file-result', 'Enter a Batch ID.', 'err');
-    if (!fileInput.files.length) return showResult('file-result', 'Select a file to verify.', 'err');
+    const resultEl = document.getElementById('verify-result');
+    const batchId  = document.getElementById('verify-batchid').value.trim();
+    const fileInput = document.getElementById('verify-file');
+
+    if (!batchId) {
+      resultEl.innerHTML = 'Please select or enter a Batch ID.';
+      resultEl.className = 'result show err';
+      return;
+    }
+    if (!fileInput.files.length) {
+      resultEl.innerHTML = 'Please upload a log file to verify.';
+      resultEl.className = 'result show err';
+      return;
+    }
 
     try {
-      showResult('file-result', 'Computing SHA-256 hash...', 'warn');
-      const fileHash = await computeFileHash(fileInput.files[0]);
-      log(`File SHA-256: ${fileHash.slice(0, 16)}...`, 'info');
+      resultEl.innerHTML = 'Computing file hash...';
+      resultEl.className = 'result show warn';
 
-      showResult('file-result', `File hash: ${fileHash}\nFetching on-chain hash...`, 'warn');
+      // Step 1: Hash the uploaded file
+      const fileHash = await computeFileHash(fileInput.files[0]);
+      const fileName = fileInput.files[0].name;
+      log(`File "${fileName}" → SHA-256: ${fileHash.slice(0,16)}...`, 'info');
+
+      resultEl.innerHTML = 'Comparing with blockchain record...';
+      log(`Verifying batch "${batchId}" against blockchain...`, 'tx');
+
+      // Step 2: Get on-chain hash
       const [onChainHash, timestamp, submitter] = await contract.getHash(batchId);
+      const date = new Date(Number(timestamp) * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 
       if (!onChainHash) {
-        showResult('file-result', `No on-chain record found for batch "${batchId}".`, 'err');
-        log(`File verify: batch "${batchId}" not found on-chain`, 'err');
+        resultEl.innerHTML = `No on-chain record found for batch "${batchId}".`;
+        resultEl.className = 'result show err';
         return;
       }
 
-      const match = fileHash === onChainHash;
-      const date = new Date(Number(timestamp) * 1000).toISOString();
-      const resultText =
-        `File hash    : ${fileHash}\n` +
-        `On-chain hash: ${onChainHash}\n` +
-        `Stored at    : ${date}\n` +
-        `Submitter    : ${submitter}\n\n` +
-        (match
-          ? '✓ MATCH — File is intact, not tampered.'
-          : '✗ TAMPERED — File hash does NOT match on-chain record!');
+      // Step 3: Compare
+      const isMatch = fileHash === onChainHash;
 
-      showResult('file-result', resultText, match ? 'match' : 'tamper');
-      log(`File verify("${batchId}") → ${match ? 'MATCH' : 'TAMPERED'}`, match ? 'ok' : 'err');
+      if (isMatch) {
+        resultEl.innerHTML =
+          `<div class="result-status">✓ MATCH — File is intact</div>` +
+          `<div class="result-detail">` +
+          `The log file has NOT been modified.\n` +
+          `The file hash matches the blockchain record.\n\n` +
+          `File         : ${fileName}\n` +
+          `Batch ID     : ${batchId}\n` +
+          `File hash    : ${fileHash}\n` +
+          `Stored at    : ${date}` +
+          `</div>`;
+        resultEl.className = 'result show match';
+        log(`Verify "${batchId}" → MATCH ✓ — file is intact`, 'ok');
+      } else {
+        resultEl.innerHTML =
+          `<div class="result-status">✗ TAMPERED — File has been modified!</div>` +
+          `<div class="result-detail">` +
+          `The log file does NOT match the blockchain record.\n` +
+          `Someone has changed this file after it was sealed.\n\n` +
+          `File              : ${fileName}\n` +
+          `Batch ID          : ${batchId}\n` +
+          `Current file hash : ${fileHash}\n` +
+          `<span style="color:#16a34a;font-weight:600">Original hash     : ${onChainHash}</span>\n` +
+          `Sealed at         : ${date}\n` +
+          `Sealed by         : ${submitter}` +
+          `</div>`;
+        resultEl.className = 'result show tamper';
+        log(`Verify "${batchId}" → TAMPERED ✗ — file was modified!`, 'err');
+      }
     } catch (e) {
       const msg = e.reason || e.message || String(e);
-      showResult('file-result', `Error: ${msg}`, 'err');
-      log(`File verify error: ${msg}`, 'err');
-    }
-  }
-
-  // ── batchExists ───────────────────────────────────────────────────────────
-  async function doBatchExists() {
-    if (!contract) return log('Connect wallet first.', 'warn');
-    const batchId = document.getElementById('exists-batchid').value.trim();
-    if (!batchId) return showResult('exists-result', 'Enter a Batch ID.', 'err');
-    try {
-      const exists = await contract.batchExists(batchId);
-      showResult('exists-result', exists ? '✓ Exists' : '✗ Not found', exists ? 'ok' : 'err');
-      log(`batchExists("${batchId}") → ${exists}`, exists ? 'ok' : 'warn');
-    } catch (e) {
-      showResult('exists-result', `Error: ${e.message}`, 'err');
-    }
-  }
-
-  // ── getBatchIdByIndex ─────────────────────────────────────────────────────
-  async function doGetByIndex() {
-    if (!contract) return log('Connect wallet first.', 'warn');
-    const idx = document.getElementById('index-val').value;
-    if (idx === '') return showResult('index-result', 'Enter an index.', 'err');
-    try {
-      const batchId = await contract.getBatchIdByIndex(BigInt(idx));
-      showResult('index-result', batchId, 'ok');
-      log(`getBatchIdByIndex(${idx}) → ${batchId}`, 'ok');
-    } catch (e) {
-      const msg = e.reason || e.message || String(e);
-      showResult('index-result', `Error: ${msg}`, 'err');
-      log(`getBatchIdByIndex error: ${msg}`, 'err');
+      resultEl.innerHTML = `Error: ${msg}`;
+      resultEl.className = 'result show err';
+      log(`Verify error: ${msg}`, 'err');
     }
   }
 </script>
